@@ -1,38 +1,82 @@
-const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+// Betöltjük a környezeti változókat (ha helyben futtatod)
+require('dotenv').config();
 
-const app = express();
+// === ITT A VÁLTOZÁS: process.env ===
+const TOKEN = process.env.DISCORD_TOKEN; 
+const CHANNEL_ID = process.env.CHANNEL_ID; 
 
-// --- ITT CSERÉLD KI A CÍMET! ---
-const TARGET_URL = 'http://82.145.41.50:23348';
-// ---------------------------------
+// Ellenőrzés: Ha nincsenek beállítva, szóljon a szerver
+if (!TOKEN || !CHANNEL_ID) {
+    console.error("HIBA: Nincs beállítva a DISCORD_TOKEN vagy a CHANNEL_ID az Environment Variables-ben!");
+    process.exit(1);
+}
 
-console.log(`Proxying to -> ${TARGET_URL}`);
+const express = require("express");
+const bodyParser = require("body-parser");
+const { Client, GatewayIntentBits } = require("discord.js");
+const cors = require("cors");
+const path = require("path");
 
-// Hozd létre a proxy-t a beállított céloldallal
-const apiProxy = createProxyMiddleware({
-    target: TARGET_URL,
-    changeOrigin: true,
-    logLevel: 'debug',
-
-    // --- EZ AZ ÚJ, FONTOS RÉSZ ---
-    // Útvonal átírási szabályok
-    pathRewrite: (path, req) => {
-        // Ha az elérési út pontosan '/live/', akkor cseréljük le '/live'-ra
-        if (path === '/live/') {
-            return '/live';
-        }
-        // Minden más esetben hagyjuk az útvonalat változatlanul
-        return path;
-    }
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
-// Minden bejövő kérést irányíts át a céloldalra a proxy segítségével
-// Maradjunk az általánosabb verziónál, hogy minden működjön.
-app.use('/', apiProxy);
+const app = express();
+app.use(bodyParser.json());
+app.use(cors());
 
-// A Render.com által megadott porton indítsd el a szervert, vagy alapból a 3000-es porton
+// Álcázó weboldal
+app.get("/", (req, res) => {
+    res.send(`
+    <html>
+        <head><title>System Status</title><style>body{background:#000;color:#0f0;font-family:monospace;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;}</style></head>
+        <body><h1>SECURE CONNECTION ESTABLISHED<br>ENV VARIABLES: OK</h1></body>
+    </html>
+    `);
+});
+
+let gameQueue = [];
+
+client.once("ready", () => {
+  console.log("Secure Bot Online: " + client.user.tag);
+});
+
+client.on("messageCreate", (message) => {
+  if (message.author.bot) return;
+  if (message.channel.id !== CHANNEL_ID) return;
+
+  gameQueue.push({
+    name: message.author.username,
+    text: message.content
+  });
+
+  if (gameQueue.length > 15) gameQueue.shift();
+});
+
+app.post("/send-to-discord", (req, res) => {
+  const { name, text } = req.body;
+  const channel = client.channels.cache.get(CHANNEL_ID);
+  
+  if (channel && name && text) {
+    channel.send(`**${name}**: ${text}`);
+    res.json({ success: true });
+  } else {
+    res.status(400).json({ error: "Hiba" });
+  }
+});
+
+app.get("/get-from-discord", (req, res) => {
+  res.json(gameQueue);
+  gameQueue = [];
+});
+
+client.login(TOKEN);
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Proxy server is running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
